@@ -229,37 +229,69 @@ with col3:
      intraday_interval = st.selectbox("Intraday Interval:", ["5m", "15m", "30m", "60m"], index=0)
 with col4:
      vol_filter = st.selectbox("Apply Volume Breakout Filter?", ["No", "Yes"], index=0)
-
 if st.button("Run Analysis"):
     # --------------------------
-    # Step 1: Get Daily Data (Yesterday's OHLC)
+    # Step 1: Get Daily Data (Yesterday + Day Before Yesterday)
     # --------------------------
-    daily = yf.download(ticker, period=period, interval="1d")
-    if daily.empty or len(daily) < 2:
-        st.error("Not enough daily data to calculate yesterday's CPR.")
+    daily = yf.download(ticker, period="7d", interval="1d")
+    if daily.empty or len(daily) < 3:
+        st.error("Not enough daily data to calculate CPR trend.")
         st.stop()
 
+    # Remove today if market not closed
     daily = daily[daily.index.date < datetime.today().date()]
+
+    # Yesterday and Day Before Yesterday
     yday = daily.iloc[-1]
-    yday_high = float(yday["High"])
-    yday_low = float(yday["Low"])
-    yday_close = float(yday["Close"])
+    dby = daily.iloc[-2]
 
     # --------------------------
     # Step 2: Yesterday CPR
     # --------------------------
+    yday_high = float(yday["High"])
+    yday_low = float(yday["Low"])
+    yday_close = float(yday["Close"])
+
     pivot_y = (yday_high + yday_low + yday_close) / 3
     bc_y = (yday_high + yday_low) / 2
     tc_y = 2 * pivot_y - bc_y
+
     r1 = (2 * pivot_y) - yday_low
     s1 = (2 * pivot_y) - yday_high
     r2 = pivot_y + (yday_high - yday_low)
     s2 = pivot_y - (yday_high - yday_low)
 
-    st.write(f"**Yesterday CPR:** Pivot={pivot_y:.2f}, BC={bc_y:.2f}, TC={tc_y:.2f}, R1={r1:.2f}, R2={r2:.2f}, S1={s1:.2f}, S2={s2:.2f}")
+    # --------------------------
+    # Step 3: Day Before Yesterday CPR (for trend check)
+    # --------------------------
+    dby_high = float(dby["High"])
+    dby_low = float(dby["Low"])
+    dby_close = float(dby["Close"])
+
+    pivot_dby = (dby_high + dby_low + dby_close) / 3
+    bc_dby = (dby_high + dby_low) / 2
+    tc_dby = 2 * pivot_dby - bc_dby
 
     # --------------------------
-    # Step 3: Today's Intraday Data
+    # Step 4: CPR Trend Logic
+    # --------------------------
+    if bc_y > bc_dby and tc_y > tc_dby:
+        cpr_trend = "📈 Ascending CPR (Bullish)"
+    elif bc_y < bc_dby and tc_y < tc_dby:
+        cpr_trend = "📉 Descending CPR (Bearish)"
+    elif bc_y > tc_dby and tc_y < bc_dby:
+        cpr_trend = "📊 Inside Value CPR (Consolidation)"
+    elif tc_y < bc_dby or bc_y > tc_dby:
+        cpr_trend = "🔄 Outside Value CPR (Volatile)"
+    else:
+        cpr_trend = "⚖️ Neutral CPR"
+
+    st.write(f"**Yesterday CPR:** Pivot={pivot_y:.2f}, BC={bc_y:.2f}, TC={tc_y:.2f}")
+    st.write(f"R1={r1:.2f}, R2={r2:.2f}, S1={s1:.2f}, S2={s2:.2f}")
+    st.info(f"**CPR Trend:** {cpr_trend}")
+
+    # --------------------------
+    # Step 5: Today's Intraday Data
     # --------------------------
     today = datetime.today().date()
     intraday = yf.download(
@@ -283,7 +315,7 @@ if st.button("Run Analysis"):
     intraday["Datetime"] = pd.to_datetime(intraday["Datetime"], utc=True).dt.tz_convert(tz)
 
     # --------------------------
-    # Step 4: First Candle Breakout Check
+    # Step 6: First Candle Breakout Check
     # --------------------------
     first_candle = intraday.iloc[0]
     first_close = first_candle["Close"]
@@ -305,7 +337,7 @@ if st.button("Run Analysis"):
         st.info(f"First candle close ({first_close:.2f}) below yesterday's high ({yday_high:.2f}) - No Breakout")
 
     # --------------------------
-    # Step 5: Plot
+    # Step 7: Plot
     # --------------------------
     fig = go.Figure()
 
@@ -323,18 +355,23 @@ if st.button("Run Analysis"):
     fig.add_hline(y=yday_high, line=dict(color="blue", dash="dash"), annotation_text=f"Yday High: {yday_high:.2f}")
 
     # CPR Zone
-    cpr_color = "green" if first_close > pivot_y else "yellow"
     fig.add_shape(
         type="rect",
         x0=intraday["Datetime"].iloc[0],
         x1=intraday["Datetime"].iloc[-1],
         y0=bc_y,
         y1=tc_y,
-        fillcolor=cpr_color,
+        fillcolor="green" if first_close > pivot_y else "yellow",
         opacity=0.2,
         layer="below",
         line_width=0
     )
+
+    # R1, R2, S1, S2 Lines
+    fig.add_hline(y=r1, line=dict(color="purple", dash="dot"), annotation_text=f"R1 {r1:.2f}")
+    fig.add_hline(y=r2, line=dict(color="purple", dash="dot"), annotation_text=f"R2 {r2:.2f}")
+    fig.add_hline(y=s1, line=dict(color="red", dash="dot"), annotation_text=f"S1 {s1:.2f}")
+    fig.add_hline(y=s2, line=dict(color="red", dash="dot"), annotation_text=f"S2 {s2:.2f}")
 
     # Mark Breakout
     if breakout:
@@ -347,7 +384,7 @@ if st.button("Run Analysis"):
         ))
 
     fig.update_layout(
-        title=f"{ticker} - First Candle CPR Breakout Check",
+        title=f"{ticker} - First Candle CPR Breakout + Trend",
         xaxis_title=f"Time ({tz})",
         yaxis_title="Price",
         template="plotly_dark",
