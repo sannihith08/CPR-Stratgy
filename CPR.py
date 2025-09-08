@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="CPR + Breakout Strategy", layout="wide")
 
-st.title("📊 CPR Previous Day + Intraday + Breakout Strategy")
+st.title("📊 CPR-Breakout Strategy")
 
 # --------------------------
 # User Inputs
@@ -37,15 +37,16 @@ if uploaded_file is not None:
             # Step 1: Daily Data for CPR
             # --------------------------
             daily = yf.download(ticker, period="15d", interval="1d")
-            daily = daily[daily.index.date < today]
+            #daily = daily[daily.index.date < today]
 
-            if len(daily) < 2:
+            if len(daily) == 0:
                 continue  # not enough data
 
             # Yesterday's OHLC
-            yday_high = float(daily["High"].iloc[-1])
-            yday_low = float(daily["Low"].iloc[-1])
-            yday_close = float(daily["Close"].iloc[-1])
+            yday_high = float(daily["High"].iloc[-2])
+            #st.write("Ydayhigh",yday_high)
+            yday_low = float(daily["Low"].iloc[-2])
+            yday_close = float(daily["Close"].iloc[-2])
 
             # CPR Calculation
             P = (yday_high + yday_low + yday_close) / 3
@@ -138,13 +139,13 @@ if st.button("Run Analysis"):
         st.stop()
 
     # Yesterday & Day-before data (backtest mode)
-    yday_high = float(daily["High"].iloc[-1])
-    yday_low = float(daily["Low"].iloc[-1])
-    yday_close = float(daily["Close"].iloc[-1])
+    yday_high = float(daily["High"].iloc[-2])
+    yday_low = float(daily["Low"].iloc[-2])
+    yday_close = float(daily["Close"].iloc[-2])
 
-    prev_high = float(daily["High"].iloc[-2])
-    prev_low = float(daily["Low"].iloc[-2])
-    prev_close = float(daily["Close"].iloc[-2])
+    prev_high = float(daily["High"].iloc[-3])
+    prev_low = float(daily["Low"].iloc[-3])
+    prev_close = float(daily["Close"].iloc[-3])
 
     last_trading_day = daily.index[-1].date()
 
