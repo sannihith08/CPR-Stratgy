@@ -38,52 +38,68 @@ if uploaded_file is not None:
                 continue
 
             # Yesterday OHLC (for CPR)
-            yday_high = float(daily["High"].iloc[-2])
-            yday_low = float(daily["Low"].iloc[-2])
-            yday_close = float(daily["Close"].iloc[-2])
+            yday_high =daily["High"].iloc[-2].item()
+            yday_low = daily["Low"].iloc[-2].item()
+            yday_close =daily["Close"].iloc[-2].item()
 
-            # Today reference OHLC
-            today_high = float(daily["High"].iloc[-1])
-            today_low = float(daily["Low"].iloc[-1])
-            today_close = float(daily["Close"].iloc[-1])
+            # Day-before-yesterday OHLC
+            dby_high = daily["High"].iloc[-3].item()
+            dby_low = daily["Low"].iloc[-3].item()
+            dby_close = daily["Close"].iloc[-3].item()
 
             # CPR for yesterday
             y_pivot = (yday_high + yday_low + yday_close) / 3
             y_bc = (yday_high + yday_low) / 2
             y_tc = 2 * y_pivot - y_bc
 
-            # CPR for today
-            t_pivot = (today_high + today_low + today_close) / 3
-            t_bc = (today_high + today_low) / 2
-            t_tc = 2 * t_pivot - t_bc
+            # CPR for day-before-yesterday
+            dby_pivot = (dby_high + dby_low + dby_close) / 3
+            dby_bc = (dby_high + dby_low) / 2
+            dby_tc = 2 * dby_pivot - dby_bc
+            # ---- CPR Trend ----
+            if (y_pivot > dby_pivot and y_bc > dby_bc and y_tc > dby_tc):
+                cpr_trend = "Ascending"
+            elif (y_pivot < dby_pivot and y_bc < dby_bc and y_tc < dby_tc):
+                cpr_trend = "Descending"
+            else:
+                cpr_trend = "Sideways"
 
+            # ---- CPR Type (for yesterday CPR) ----
+            cpr_width = y_tc - y_bc
+            cpr_pct = (cpr_width / y_pivot) * 100
+            cpr_type = "Narrow" if cpr_pct < 0.25 else "Wide"
+            
             # Ascending CPR check
-            if not (t_pivot > y_pivot and t_bc > y_bc and t_tc > y_tc):
+            if not (y_pivot > dby_pivot and y_bc > dby_bc and y_tc > dby_tc):
                 continue
 
-            # ---- Step 2: Intraday 5-min data ----
-            intraday = yf.download(
-                ticker,
-                start=daily.index[-1].date(),
-                end=daily.index[-1].date() + timedelta(days=1),
-                interval="5m"
-            ).reset_index()
-
-            if intraday.empty:
+            # ---- Step 2: Intraday 5-min ----
+            intraday = yf.download(ticker, period="1d", interval="5m")
+            if intraday is None or intraday.empty:
                 continue
+
+            intraday = intraday.reset_index()
 
             # First 5-min candle
-            # first_candle = intraday.iloc[0]
-            # first_close = float(first_candle["Close"])
-
-             #First 5-min candle
             first_candle = intraday.iloc[0]
             first_open = float(first_candle["Open"])
             first_close = float(first_candle["Close"])
+            yday_high = float(daily["High"].iloc[-2])
 
-            # Check condition
-            if (first_close > first_open) and (first_close > yday_high):
-                qualified_stocks.append(ticker)
+            # first_open = first_candle["Open"]
+            # first_close = first_candle["Close"]
+
+            # Breakout check (close above open + above yesterday's high)
+            #if (first_close > first_open) and (first_close > yday_high):
+            if first_close > yday_high :   
+                qualified_stocks.append({
+                    "Symbol": ticker,
+                    "First Open": first_open,
+                    "First Close": first_close,
+                    "Yesterday High": yday_high,
+                    "CPR Trend": cpr_trend,
+                    "CPR-Type" :cpr_type
+                })
 
         except Exception as e:
             st.warning(f"⚠️ Error processing {ticker}: {e}")
@@ -96,32 +112,34 @@ if uploaded_file is not None:
     # --------------------------
     if qualified_stocks:
         st.success("✅ Stocks satisfying conditions:")
-        result_df = pd.DataFrame(qualified_stocks, columns=["Qualified Stocks"])
+        result_df = pd.DataFrame(qualified_stocks)
         st.dataframe(result_df)
+        # result_df = pd.DataFrame(qualified_stocks, columns=["Qualified Stocks"])
+        # st.dataframe(result_df)
 
         # Save to CSV
         csv_file = "qualified_stocks.csv"
         result_df.to_csv(csv_file, index=False)
 
-        # Download link
-        st.download_button(
-            label="📥 Download Qualified Stocks CSV",
-            data=result_df.to_csv(index=False).encode("utf-8"),
-            file_name="qualified_stocks.csv",
-            mime="text/csv"
-        )
+        # # Download link
+        # st.download_button(
+        #     label="📥 Download Qualified Stocks CSV",
+        #     data=result_df.to_csv(index=False).encode("utf-8"),
+        #     file_name="qualified_stocks.csv",
+        #     mime="text/csv"
+        # )
     else:
         st.error("❌ No stocks satisfied the conditions today.")
 
    
         progress_bar.progress((idx + 1) / total)
 
-    # ---- Final Output ----
-    st.subheader("✅ Qualified Stocks (Ascending CPR + Breakout)")
-    if qualified_stocks:
-        st.write(qualified_stocks)
-    else:
-        st.write("No stocks matched the criteria today.")
+    # # ---- Final Output ----
+    # st.subheader("✅ Qualified Stocks (Ascending CPR + Breakout)")
+    # if qualified_stocks:
+    #     st.write(qualified_stocks)
+    # else:
+    #     st.write("No stocks matched the criteria today.")
 
 
 # end of today'cpr data
@@ -275,13 +293,23 @@ if st.button("Run Analysis"):
     # --------------------------
     # Step 4: CPR Trend Logic
     # --------------------------
+    # if bc_y > bc_dby and tc_y > tc_dby:
+    #     cpr_trend = "📈 Ascending CPR (Bullish)"
+    # elif bc_y < bc_dby and tc_y < tc_dby:
+    #     cpr_trend = "📉 Descending CPR (Bearish)"
+    # elif bc_y > tc_dby and tc_y < bc_dby:
+    #     cpr_trend = "📊 Inside Value CPR (Consolidation)"
+    # elif tc_y < bc_dby or bc_y > tc_dby:
+    #     cpr_trend = "🔄 Outside Value CPR (Volatile)"
+    # else:
+    #     cpr_trend = "⚖️ Neutral CPR"
     if bc_y > bc_dby and tc_y > tc_dby:
         cpr_trend = "📈 Ascending CPR (Bullish)"
     elif bc_y < bc_dby and tc_y < tc_dby:
         cpr_trend = "📉 Descending CPR (Bearish)"
-    elif bc_y > tc_dby and tc_y < bc_dby:
+    elif (bc_y >= bc_dby) and (tc_y <= tc_dby):
         cpr_trend = "📊 Inside Value CPR (Consolidation)"
-    elif tc_y < bc_dby or bc_y > tc_dby:
+    elif (bc_y < bc_dby and tc_y > tc_dby) or (bc_y > bc_dby and tc_y < tc_dby):
         cpr_trend = "🔄 Outside Value CPR (Volatile)"
     else:
         cpr_trend = "⚖️ Neutral CPR"
@@ -394,3 +422,176 @@ if st.button("Run Analysis"):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+
+
+
+
+# --------------------------
+# User Inputs
+# --------------------------
+# ticker = st.text_input("Enter Stock Symbol:", "HDFCBANK.NS")
+# intraday_interval = st.selectbox("Intraday Interval:", ["5m", "15m", "30m", "60m"])
+# vol_filter = st.selectbox("Apply Volume Filter for Breakout?", ["Yes", "No"])
+
+# # --------------------------
+# if st.button("Run New CPR Stratgy"):
+    # --------------------------
+    # Step 1: Get Daily Data (Yesterday + Day Before Yesterday)
+    # --------------------------
+    daily = yf.download(ticker, period="7d", interval="1d")
+    if daily.empty or len(daily) < 2:
+        st.error("Not enough daily data to calculate CPR.")
+        st.stop()
+
+    # Remove today if market not closed
+    daily = daily[daily.index.date < datetime.today().date()]
+
+    yday = daily.iloc[-1]   # Yesterday
+    dby  = daily.iloc[-2]   # Day Before Yesterday (optional for trend)
+
+    # --------------------------
+    # Step 2: Yesterday CPR
+    # --------------------------
+    yday_high  = float(yday["High"])
+    yday_low   = float(yday["Low"])
+    yday_close = float(yday["Close"])
+
+    pivot_y = (yday_high + yday_low + yday_close) / 3
+    bc_y = (yday_high + yday_low) / 2
+    tc_y = 2 * pivot_y - bc_y
+
+    r1 = (2 * pivot_y) - yday_low
+    s1 = (2 * pivot_y) - yday_high
+    r2 = pivot_y + (yday_high - yday_low)
+    s2 = pivot_y - (yday_high - yday_low)
+
+    # --------------------------
+    # Optional: CPR Trend
+    # --------------------------
+    dby_high  = float(dby["High"])
+    dby_low   = float(dby["Low"])
+    dby_close = float(dby["Close"])
+
+    pivot_dby = (dby_high + dby_low + dby_close) / 3
+    bc_dby = (dby_high + dby_low) / 2
+    tc_dby = 2 * pivot_dby - bc_dby
+
+    ascending_cpr = bc_y > bc_dby and tc_y > tc_dby
+    cpr_trend = "📈 Ascending CPR (Bullish)" if ascending_cpr else "Not Ascending CPR"
+
+    st.write(f"**Yesterday CPR:** Pivot={pivot_y:.2f}, BC={bc_y:.2f}, TC={tc_y:.2f}")
+    st.write(f"R1={r1:.2f}, R2={r2:.2f}, S1={s1:.2f}, S2={s2:.2f}")
+    st.info(f"**CPR Trend:** {cpr_trend}")
+
+    # --------------------------
+    # Step 3: Intraday Data Today
+    # --------------------------
+    today = datetime.today().date()
+    intraday = yf.download(
+        ticker,
+        start=today,
+        end=today + timedelta(days=1),
+        interval=intraday_interval
+    ).reset_index()
+
+    if intraday.empty:
+        st.error("No intraday data found for today.")
+        st.stop()
+
+    if isinstance(intraday.columns, pd.MultiIndex):
+        intraday.columns = intraday.columns.get_level_values(0)
+
+    intraday = intraday.dropna(subset=["Open", "High", "Low", "Close"])
+    tz = "Asia/Kolkata" if ticker.endswith(".NS") else "America/New_York"
+    intraday["Datetime"] = pd.to_datetime(intraday["Datetime"], utc=True).dt.tz_convert(tz)
+
+    # --------------------------
+    # Step 4: 3-Candle Breakout Check (Ascending CPR)
+    # --------------------------
+    breakout = False
+    if ascending_cpr:
+        if len(intraday) < 3:
+            st.warning("Not enough intraday candles for 3-candle pattern check")
+        else:
+            c1 = intraday.iloc[0]
+            c2 = intraday.iloc[1]
+            c3 = intraday.iloc[2]
+
+            c1_green = c1["Close"] > c1["Open"]
+            c2_red   = c2["Close"] < c2["Open"]
+            c3_green = c3["Close"] > c3["Open"]
+
+            breakout = c1_green and c2_red and c3_green and (c3["Close"] > yday_high) and (c3["Close"] > r1)
+
+            # Apply volume filter if selected
+            if vol_filter == "Yes":
+                avg_vol_10d = float(daily["Volume"].tail(7).mean())
+                if c3["Volume"] < avg_vol_10d:
+                    breakout = False
+                    st.warning("⚠️ Third candle volume not sufficient for breakout")
+
+            if breakout:
+                st.success(f"✅ 3-Candle Breakout Confirmed! Third candle closed at {c3['Close']:.2f} above Yday High {yday_high:.2f} and R1 {r1:.2f}")
+            else:
+                st.info("3-Candle breakout pattern not formed yet.")
+
+    # --------------------------
+    # Step 5: Plot Intraday Chart
+    # --------------------------
+    fig = go.Figure()
+
+    # Candlesticks
+    fig.add_trace(go.Candlestick(
+        x=intraday["Datetime"],
+        open=intraday['Open'],
+        high=intraday['High'],
+        low=intraday['Low'],
+        close=intraday['Close'],
+        name="Candles"
+    ))
+
+    # Yesterday High
+    fig.add_hline(y=yday_high, line=dict(color="blue", dash="dash"), annotation_text=f"Yday High: {yday_high:.2f}")
+
+    # CPR Zone
+    fig.add_shape(
+        type="rect",
+        x0=intraday["Datetime"].iloc[0],
+        x1=intraday["Datetime"].iloc[-1],
+        y0=bc_y,
+        y1=tc_y,
+        fillcolor="green" if ascending_cpr else "yellow",
+        opacity=0.2,
+        layer="below",
+        line_width=0
+    )
+
+    # R1, R2, S1, S2 Lines
+    fig.add_hline(y=r1, line=dict(color="purple", dash="dot"), annotation_text=f"R1 {r1:.2f}")
+    fig.add_hline(y=r2, line=dict(color="purple", dash="dot"), annotation_text=f"R2 {r2:.2f}")
+    fig.add_hline(y=s1, line=dict(color="red", dash="dot"), annotation_text=f"S1 {s1:.2f}")
+    fig.add_hline(y=s2, line=dict(color="red", dash="dot"), annotation_text=f"S2 {s2:.2f}")
+
+    # Mark Breakout
+    if breakout:
+        fig.add_trace(go.Scatter(
+            x=[c3["Datetime"]],
+            y=[c3["Close"]],
+            mode="markers",
+            marker=dict(color="orange", size=14, symbol="star"),
+            name="Breakout"
+        ))
+
+    fig.update_layout(
+        title=f"{ticker} - 3-Candle CPR Breakout + Trend",
+        xaxis_title=f"Time ({tz})",
+        yaxis_title="Price",
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        height=600,
+        xaxis=dict(type="date", tickformat="%H:%M")
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
